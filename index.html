@@ -1,0 +1,147 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AURA</title><meta name="theme-color" content="#c9f3ff"><link rel="manifest" href="manifest.json"><link rel="icon" href="icon.svg"><style>:root{--ink:#1d2a44;--mute:#5d6b86;--cy:#22d3ee;--vi:#8b5cf6;--ice:#dff4ff}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{font:15px/1.5 "Segoe UI",system-ui,sans-serif;color:var(--ink);background:radial-gradient(900px 600px at 15% 10%,#c9f3ff,transparent),radial-gradient(800px 600px at 90% 90%,#e3d9ff,transparent),#f4f9ff;display:grid;place-items:center;padding:16px}
+.shell{display:grid;grid-template-columns:minmax(260px,380px) minmax(300px,1fr);gap:16px;width:min(980px,100%);max-height:100%}
+.glass{background:rgba(255,255,255,.62);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.9);border-radius:24px;box-shadow:0 20px 50px rgba(80,110,180,.18)}
+.hero{padding:18px;text-align:center;display:flex;flex-direction:column;align-items:center}
+canvas{width:100%;max-width:300px;aspect-ratio:1}
+h1{margin:0;letter-spacing:.35em;font-weight:300;font-size:26px}.sub{margin:2px 0 10px;color:var(--mute)}
+.badge{align-self:flex-end;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.1em}
+.badge i{width:8px;height:8px;border-radius:50%;background:var(--cy);box-shadow:0 0 8px var(--cy)}
+.panel{padding:16px;display:flex;flex-direction:column;gap:10px;min-height:0;max-height:calc(100vh - 32px)}
+#log{flex:1;min-height:140px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.msg{padding:8px 12px;border-radius:14px;max-width:88%;white-space:pre-wrap;animation:in .25s ease}
+.aura{background:#fff;align-self:flex-start}.user{background:linear-gradient(135deg,#bff1fb,#d9ccff);align-self:flex-end}
+.err{background:#f1e8ff;color:#5b21b6}@keyframes in{from{opacity:0;transform:translateY(6px)}}
+form,.row,#confirm{display:flex;gap:8px;align-items:center}
+input:not([type=checkbox]){flex:1;min-width:0;padding:10px 12px;border:1px solid #cfe3f5;border-radius:12px;background:#fff;font:inherit;color:inherit}
+input:focus{outline:2px solid var(--cy);outline-offset:1px}
+button{padding:9px 14px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--cy),var(--vi));color:#fff;font:inherit;cursor:pointer;transition:transform .12s,filter .12s}
+button:hover{filter:brightness(1.06);transform:translateY(-1px)}button.ghost{background:#fff;color:var(--ink);border:1px solid #cfe3f5}
+#confirm{background:#fff;padding:8px 10px;border-radius:12px}#cq{flex:1}
+summary{cursor:pointer;color:var(--mute);margin-bottom:6px}ul{list-style:none;margin:8px 0 0;padding:0;max-height:160px;overflow:auto}
+li{display:flex;gap:8px;justify-content:space-between;padding:6px 0;border-bottom:1px solid #e3eefa}li button{padding:2px 8px;background:#fff;color:#7c3aed;border:1px solid #e3d9ff}
+.hint,.chk{font-size:12px;color:var(--mute)}
+@media(max-width:760px){.shell{grid-template-columns:1fr}body{place-items:start}.panel{max-height:none}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head><body>
+<main class="shell">
+ <section class="hero glass"><div class="badge"><i></i><span id="state">idle</span></div>
+  <canvas id="stage" width="420" height="420" aria-label="AURA companion"></canvas>
+  <h1>AURA</h1><p class="sub">Living desktop companion</p>
+  <div class="row"><button id="mic" title="Voice input">🎤 Listen</button><label class="chk"><input type="checkbox" id="voice" checked> Speak replies</label></div>
+  <p class="hint" id="caps"></p></section>
+ <section class="panel glass">
+  <div id="log" aria-live="polite"></div>
+  <div id="confirm" hidden><span id="cq"></span><button id="cy">Confirm</button><button id="cn" class="ghost">Cancel</button></div>
+  <form id="f"><input id="cmd" autocomplete="off" placeholder="Try: what time is it · google pizza · remember … · status"><button>Send</button></form>
+  <details open><summary>Saved notes <span id="count"></span></summary>
+   <div class="row"><input id="q" placeholder="Search notes"><button id="clear" class="ghost">Clear all</button></div><ul id="notes"></ul></details>
+ </section></main><script>const $=s=>document.querySelector(s);
+const log=$('#log'),input=$('#cmd'),cv=$('#stage'),ctx=cv.getContext('2d');
+let state='idle',until=0,pending=null,lastNotes=[],status=null;
+const synth=window.speechSynthesis,SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+$('#caps').textContent=(synth?'Speech output: available. ':'Speech output: not supported. ')+(SR?'Voice input: available (Chrome/Edge send audio to an online service).':'Voice input: not supported here; use text.');
+if(!SR)$('#mic').disabled=true;
+
+function setState(s,ms=0){state=s;$('#state').textContent=s;until=ms?performance.now()+ms:0}
+function say(t,k='aura'){const d=document.createElement('div');d.className='msg '+k;d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight}
+function reply(t,mood){
+  say(t,mood==='err'?'aura err':'aura');
+  const end=()=>setState(mood==='ok'?'success':mood==='err'?'error':'idle',mood?1800:0);
+  if(synth&&$('#voice').checked){synth.cancel();const u=new SpeechSynthesisUtterance(t);u.onstart=()=>setState('speaking');u.onend=u.onerror=end;synth.speak(u)}else end();
+}
+const LS='aura.notes',ld=()=>{try{return JSON.parse(localStorage.getItem(LS)||'[]')}catch{return[]}},sv=n=>localStorage.setItem(LS,JSON.stringify(n));
+async function api(p,o={}){
+  const m=o.method||'GET',b=o.body?JSON.parse(o.body):{};
+  if(p.startsWith('/api/notes?')){const q=(new URLSearchParams(p.split('?')[1]).get('q')||'').toLowerCase();return{notes:ld().filter(n=>!q||n.text.toLowerCase().includes(q))}}
+  if(p==='/api/notes'&&m==='POST'){const t=(b.text||'').trim();if(!t)throw new Error('Note text is empty.');if(t.length>1000)throw new Error('Note is too long (max 1000 characters).');
+    const n={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),text:t,created:new Date().toISOString()};try{sv([...ld(),n])}catch(e){throw new Error('Could not save: '+e.message)}return{note:n}}
+  if(p==='/api/notes'&&m==='DELETE'){sv([]);return{ok:true}}
+  if(p.startsWith('/api/notes/')&&m==='DELETE'){const id=p.split('/').pop(),a=ld(),k=a.filter(n=>n.id!==id);if(k.length===a.length)throw new Error('Note not found.');sv(k);return{ok:true}}
+  if(p==='/api/status')return{platform:'phone browser',node:'',notes:ld().length,dataFile:'this browser (localStorage)',actions:[],actionsAvailable:false};
+  throw new Error('Unsupported.')}
+function ask(q,run){pending=run;$('#cq').textContent=q;$('#confirm').hidden=false;reply(q+' Say yes or press Confirm.')}
+function clearPending(){pending=null;$('#confirm').hidden=true}
+async function confirmIt(){const r=pending;clearPending();try{reply(await r(),'ok')}catch(e){reply(e.message,'err')}}
+$('#cy').onclick=confirmIt;$('#cn').onclick=()=>{clearPending();reply('Cancelled. Nothing was changed.')};
+
+async function renderNotes(){
+  try{const j=await api('/api/notes?q='+encodeURIComponent($('#q').value));lastNotes=j.notes;
+    const ul=$('#notes');ul.textContent='';$('#count').textContent='('+j.notes.length+')';
+    j.notes.forEach((n,i)=>{const li=document.createElement('li'),s=document.createElement('span'),b=document.createElement('button');
+      s.textContent=(i+1)+'. '+n.text;b.textContent='Delete';b.onclick=()=>ask('Delete note "'+n.text.slice(0,40)+'"?',async()=>{await api('/api/notes/'+n.id,{method:'DELETE'});renderNotes();return 'Note deleted.'});
+      li.append(s,b);ul.appendChild(li)});
+  }catch(e){say('Could not load notes: '+e.message,'aura err')}}
+$('#q').oninput=renderNotes;
+$('#clear').onclick=()=>ask('Delete ALL saved notes?',async()=>{await api('/api/notes',{method:'DELETE',body:JSON.stringify({confirmed:true})});renderNotes();return 'All notes cleared.'});
+
+const APPS={notepad:'notepad',calculator:'calculator',calc:'calculator',paint:'paint'};
+async function handle(raw){
+  const t=raw.trim();if(!t)return;say(t,'user');setState('thinking');
+  const l=t.toLowerCase().replace(/[.!?]+$/,'').trim();let m;
+  try{
+    if(pending){if(/^(yes|y|confirm|ok|sure|do it)$/.test(l))return confirmIt();
+      if(/^(no|n|cancel|stop)$/.test(l)){clearPending();return reply('Cancelled. Nothing was changed.')}}
+    if(m=l.match(/^(?:google|search web|look up)\s+(.+)$/)){const u='https://www.google.com/search?q='+encodeURIComponent(m[1]);return ask('Open a Google search for "'+m[1]+'"?',async()=>{window.open(u,'_blank');return 'Opened the search.'})}
+    if(m=l.match(/^call\s+([+\d][\d ()-]{2,18})$/)){const num=m[1].replace(/[^\d+]/g,'');return ask('Open the dialer for '+num+'? (I will not place the call; you press call.)',async()=>{location.href='tel:'+num;return 'Dialer opened.'})}
+    if(m=l.match(/^(?:map|navigate to|directions to)\s+(.+)$/)){const u='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(m[1]);return ask('Open maps for "'+m[1]+'"?',async()=>{window.open(u,'_blank');return 'Opened maps.'})}
+    if(/^(open|launch|start)\b/.test(l))return reply('A web app cannot open other phone apps. I can do: google <text>, call <number>, map <place>.','err');
+    if(/\btime\b/.test(l))return reply('It is '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})+'.','ok');
+    if(/\b(date|today)\b/.test(l))return reply('Today is '+new Date().toLocaleDateString([],{weekday:'long',year:'numeric',month:'long',day:'numeric'})+'.','ok');
+    if(m=t.match(/^(?:remember|note|save)(?:\s+(?:that|this))?[:\s]+(.+)$/i)){
+      const text=m[1].trim();if(/^(project idea|idea|it|this)$/i.test(text))return reply('What should I remember? Say: remember <your text>.');
+      await api('/api/notes',{method:'POST',body:JSON.stringify({text})});renderNotes();return reply('Saved your note.','ok')}
+    if(/^(remember|note|save)\b/.test(l))return reply('What should I remember? Say: remember <your text>.');
+    if(/^(show|list|my)\b.*\bnotes\b/.test(l)){await renderNotes();return reply(lastNotes.length?'You have '+lastNotes.length+' note(s). They are in the panel.':'You have no saved notes yet.','ok')}
+    if(m=l.match(/^(?:search|find)(?: notes)?(?: for)?\s+(.+)$/)){$('#q').value=m[1];await renderNotes();return reply(lastNotes.length+' note(s) match "'+m[1]+'".','ok')}
+    if(m=l.match(/^delete note (\d+)$/)){const n=lastNotes[m[1]-1];if(!n)return reply('No note with that number in the current list.','err');
+      return ask('Delete note '+m[1]+'?',async()=>{await api('/api/notes/'+n.id,{method:'DELETE'});renderNotes();return 'Note deleted.'})}
+    if(/^clear (all )?notes$/.test(l))return $('#clear').click();
+    if(/\bstatus\b/.test(l)){status=await api('/api/status');
+      return reply('Working now: text commands, time/date, notes (save, list, search, delete), google/call/map shortcuts (each needs confirmation), voice output '+(synth?'yes':'no')+', voice input '+(SR?'yes':'no')+'.\nPlanned, not built: AI chat provider, opening other apps.\nNotes: '+status.notes+', stored only in '+status.dataFile+'. Use Clear all, or clear site data, to wipe.','ok')}
+    if(/^(help|what can you do)/.test(l))return reply('Try: what time is it · google <text> · remember <text> · show my notes · search <word> · delete note <n> · clear notes · status');
+    reply('I do not understand that yet. Say "help" to see what I can do.','err');
+  }catch(e){reply(e.message,'err')}}
+$('#f').onsubmit=e=>{e.preventDefault();const v=input.value;input.value='';handle(v)};
+
+$('#mic').onclick=()=>{
+  const r=new SR();r.lang=navigator.language||'en-US';r.interimResults=false;
+  r.onstart=()=>setState('listening');
+  r.onresult=e=>handle(e.results[0][0].transcript);
+  r.onerror=e=>{reply(e.error==='not-allowed'?'Microphone permission was denied. Use text input instead.':'Voice input failed: '+e.error,'err')};
+  r.onend=()=>{if(state==='listening')setState('idle')};
+  try{synth&&synth.cancel();r.start()}catch(e){reply('Could not start the microphone: '+e.message,'err')}};
+
+// Character: canvas orb with a face, driven by state.
+const P={idle:{h:200,a:.03,s:1},listening:{h:185,a:.06,s:2},thinking:{h:262,a:.04,s:3},speaking:{h:205,a:.09,s:7},success:{h:160,a:.07,s:3},error:{h:285,a:.015,s:.6}};
+function frame(now){
+  requestAnimationFrame(frame);if(document.hidden)return;
+  if(until&&now>until)setState('idle');
+  const W=cv.width,c=W/2,t=now/1000,p=P[state],R=W*.2*(1+Math.sin(t*p.s)*p.a);
+  ctx.clearRect(0,0,W,W);
+  const oy=state==='idle'||state==='success'?Math.sin(t*1.3)*8:0,ox=state==='error'?Math.sin(t*30)*1.5:0,cy=c+oy,cx=c+ox;
+  let g=ctx.createRadialGradient(cx,cy,R*.4,cx,cy,R*2.2);g.addColorStop(0,`hsla(${p.h},90%,75%,.45)`);g.addColorStop(1,'hsla(260,90%,85%,0)');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,W);
+  if(state==='listening')for(let i=0;i<3;i++){const k=((t*.8+i/3)%1);ctx.strokeStyle=`hsla(${p.h},90%,60%,${.5*(1-k)})`;ctx.lineWidth=3;ctx.beginPath();ctx.arc(cx,cy,R*(1.1+k*.9),0,7);ctx.stroke()}
+  ctx.lineWidth=2;for(let i=0;i<2;i++){ctx.strokeStyle=`hsla(${p.h+i*50},85%,65%,.5)`;ctx.beginPath();ctx.ellipse(cx,cy,R*1.35,R*.5,t*(.5+i*.3)*(state==='thinking'?3:1)+i*1.2,0,7);ctx.stroke()}
+  if(state==='speaking'){ctx.strokeStyle=`hsla(${p.h},90%,65%,.6)`;ctx.beginPath();for(let a=0;a<=64;a++){const th=a/64*6.283,r=R*1.2+Math.sin(th*6+t*12)*R*.06*(.5+Math.sin(t*9)**2);ctx[a?'lineTo':'moveTo'](cx+Math.cos(th)*r,cy+Math.sin(th)*r)}ctx.closePath();ctx.stroke()}
+  g=ctx.createRadialGradient(cx-R*.3,cy-R*.35,R*.1,cx,cy,R);g.addColorStop(0,'#fff');g.addColorStop(.55,`hsl(${p.h},85%,82%)`);g.addColorStop(1,`hsl(${p.h+40},75%,68%)`);
+  ctx.globalAlpha=state==='error'?.85:1;ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();ctx.globalAlpha=1;
+  const blink=(t%4)<.12?.1:1,ey=cy-R*.1,ex=R*.36;ctx.fillStyle='#1d2a44';
+  for(const s of[-1,1]){ctx.beginPath();ctx.ellipse(cx+s*ex,ey+(state==='error'?R*.05:0),R*.09,R*.13*blink,state==='error'?s*.4:0,0,7);ctx.fill()}
+  ctx.strokeStyle='#1d2a44';ctx.lineWidth=3;ctx.lineCap='round';ctx.beginPath();
+  if(state==='speaking')ctx.ellipse(cx,cy+R*.38,R*.12,R*.04+Math.abs(Math.sin(t*11))*R*.1,0,0,7);
+  else if(state==='error')ctx.arc(cx,cy+R*.55,R*.14,3.5,5.9);
+  else if(state==='thinking'){ctx.moveTo(cx-R*.1,cy+R*.4);ctx.lineTo(cx+R*.1,cy+R*.4)}
+  else ctx.arc(cx,cy+R*.22,R*.2,.25,2.9);
+  ctx.stroke();
+  if(state==='thinking')for(let i=0;i<3;i++){const a=t*3+i*2.1;ctx.fillStyle=`hsl(${p.h},85%,60%)`;ctx.beginPath();ctx.arc(cx+Math.cos(a)*R*1.6,cy+Math.sin(a)*R*.7,6,0,7);ctx.fill()}
+  if(state==='success')for(let i=0;i<8;i++){const a=i*.785+t,k=(t*1.5+i*.13)%1;ctx.fillStyle=`hsla(165,80%,55%,${1-k})`;ctx.beginPath();ctx.arc(cx+Math.cos(a)*R*(1.2+k*.6),cy+Math.sin(a)*R*(1.2+k*.6),4,0,7);ctx.fill()}
+}
+requestAnimationFrame(frame);renderNotes();
+setTimeout(()=>say('Hi, I am AURA. Say "help" to see what I can do.'),200);
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script></body></html>
